@@ -4,13 +4,15 @@ use ndarray::Array2;
 #[cfg(feature = "rtrb")]
 use rtrb::RingBuffer as RtrbBuffer;
 #[cfg(feature = "rtrb")]
-use rtrb::{Consumer, Producer};
+use rtrb::{Consumer, Producer, PushError};
 
 #[cfg(not(feature = "rtrb"))]
 use std::collections::VecDeque;
 
 pub struct RingBuffer {
     accumulated_samples: Vec<f32>,
+    #[cfg(not(feature = "rtrb"))]
+    capacity: usize,
 
     #[cfg(feature = "rtrb")]
     producer: Producer<f32>,
@@ -27,6 +29,7 @@ pub struct RingBuffer {
 
 impl RingBuffer {
     pub fn new(config: MelConfig, capacity: usize) -> Self {
+        assert!(capacity > 0, "capacity must be greater than zero");
         let hop_size = config.hop_size();
         let fft_size = config.fft_size();
         let sample_rate = config.sampling_rate();
@@ -40,6 +43,8 @@ impl RingBuffer {
         Self {
             config: config.clone(),
             accumulated_samples: Vec::with_capacity(hop_size),
+            #[cfg(not(feature = "rtrb"))]
+            capacity,
             #[cfg(feature = "rtrb")]
             producer,
             #[cfg(feature = "rtrb")]
@@ -54,33 +59,46 @@ impl RingBuffer {
     pub fn add_frame(&mut self, samples: &[f32]) {
         #[cfg(feature = "rtrb")]
         {
-            // rtrb::Producer::push will overwrite old data if full
             for &s in samples {
-                let _ = self.producer.push(s);
+                self.push_sample(s);
             }
         }
         #[cfg(not(feature = "rtrb"))]
         {
-            let available = self.buffer.capacity() - self.buffer.len();
-            if samples.len() > available {
-                self.buffer.drain(0..(samples.len() - available));
+            if samples.len() >= self.capacity {
+                self.buffer.clear();
+                self.buffer
+                    .extend(&samples[samples.len() - self.capacity..]);
+                return;
+            }
+
+            let overflow = (self.buffer.len() + samples.len()).saturating_sub(self.capacity);
+            if overflow > 0 {
+                self.buffer.drain(..overflow);
             }
             self.buffer.extend(samples);
         }
     }
 
     pub fn add(&mut self, sample: f32) {
-        #[cfg(feature = "rtrb")]
-        {
-            let _ = self.producer.push(sample);
+        self.push_sample(sample);
+    }
+
+    #[cfg(feature = "rtrb")]
+    fn push_sample(&mut self, sample: f32) {
+        if let Err(PushError::Full(sample)) = self.producer.push(sample) {
+            let _ = self.consumer.pop();
+            let result = self.producer.push(sample);
+            debug_assert!(result.is_ok());
         }
-        #[cfg(not(feature = "rtrb"))]
-        {
-            if self.buffer.len() == self.buffer.capacity() {
-                self.buffer.pop_front();
-            }
-            self.buffer.push_back(sample);
+    }
+
+    #[cfg(not(feature = "rtrb"))]
+    fn push_sample(&mut self, sample: f32) {
+        if self.buffer.len() == self.capacity {
+            self.buffer.pop_front();
         }
+        self.buffer.push_back(sample);
     }
 
     pub fn maybe_mel(&mut self) -> Option<Array2<f64>> {
@@ -176,5 +194,48 @@ mod tests {
             let a = a_f64 as f32;
             assert!((a - b_f32).abs() <= 1e-6);
         });
+    }
+
+    #[test]
+    fn oversized_write_retains_newest_samples() {
+        let config = MelConfig::new(8, 4, 2, 16_000.0);
+        let mut rb = RingBuffer::new(config, 4);
+        rb.add_frame(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
+
+        #[cfg(feature = "rtrb")]
+        let buffered = {
+            let mut samples = Vec::new();
+            while let Ok(sample) = rb.consumer.pop() {
+                samples.push(sample);
+            }
+            samples
+        };
+
+        #[cfg(not(feature = "rtrb"))]
+        let buffered = rb.buffer.iter().copied().collect::<Vec<_>>();
+
+        assert_eq!(buffered, vec![2.0, 3.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn single_sample_write_discards_oldest_sample() {
+        let config = MelConfig::new(8, 4, 2, 16_000.0);
+        let mut rb = RingBuffer::new(config, 3);
+        rb.add_frame(&[1.0, 2.0, 3.0]);
+        rb.add(4.0);
+
+        #[cfg(feature = "rtrb")]
+        let buffered = {
+            let mut samples = Vec::new();
+            while let Ok(sample) = rb.consumer.pop() {
+                samples.push(sample);
+            }
+            samples
+        };
+
+        #[cfg(not(feature = "rtrb"))]
+        let buffered = rb.buffer.iter().copied().collect::<Vec<_>>();
+
+        assert_eq!(buffered, vec![2.0, 3.0, 4.0]);
     }
 }

@@ -4,7 +4,7 @@ use mel_spec::prelude::*;
 use mel_spec::quant::{load_tga_8bit, save_tga_8bit};
 use mel_spec::vad::{DetectionSettings, VadFrameTiming, VoiceActivityDetector};
 use ndarray::Array2;
-use num::Complex;
+use rustfft::num_complex::Complex;
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -27,6 +27,16 @@ fn readme_fbank_example_runs() {
 
     assert_eq!(features.ncols(), 80);
     assert!(features.nrows() > 0);
+}
+
+#[test]
+fn readme_interleaved_batch_example_runs() {
+    let frontend = BatchLogMelSpectrogram::new(BatchLogMelConfig::default()).unwrap();
+    let stereo_samples = vec![0.0_f32; 32_000];
+    let features = frontend.compute_interleaved(&stereo_samples, 2).unwrap();
+
+    assert_eq!(features.nrows(), 80);
+    assert!(features.ncols() > 0);
 }
 
 #[test]

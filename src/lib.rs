@@ -1,5 +1,5 @@
 pub mod config;
-#[cfg(all(feature = "cuda", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "cuda", any(target_os = "linux", target_os = "windows")))]
 pub mod cuda;
 pub mod fbank;
 pub mod mel;
@@ -8,7 +8,7 @@ pub mod quant;
 pub mod rb;
 pub mod stft;
 pub mod vad;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(feature = "wasm", target_arch = "wasm32", target_os = "unknown"))]
 pub mod wasm;
 #[cfg(all(feature = "wgpu", not(target_arch = "wasm32")))]
 pub mod wgpu;

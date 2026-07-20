@@ -13,8 +13,7 @@
 //! - `remove_dc_offset`: true
 
 use ndarray::Array2;
-use num::Complex;
-use rustfft::{Fft, FftPlanner};
+use rustfft::{num_complex::Complex, Fft, FftPlanner};
 use std::f64::consts::PI;
 use std::sync::Arc;
 

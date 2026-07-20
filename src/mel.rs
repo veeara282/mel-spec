@@ -2,8 +2,10 @@
 use ort::value::Tensor;
 
 use ndarray::{s, Array1, Array2, ArrayBase, ArrayView2, Axis, Data, Ix1};
-use num::Complex;
-use rustfft::{num_complex::Complex32, Fft, FftPlanner};
+use rustfft::{
+    num_complex::{Complex, Complex32},
+    Fft, FftPlanner,
+};
 use std::error::Error;
 use std::f32::consts::PI as PI_F32;
 use std::fmt;
@@ -301,9 +303,29 @@ impl BatchLogMelSpectrogram {
         self.compute_with_scratch(samples, &mut scratch)
     }
 
+    /// Downmix interleaved PCM to mono before feature extraction.
+    pub fn compute_interleaved(
+        &self,
+        samples: &[f32],
+        channels: usize,
+    ) -> Result<Array2<f32>, BatchLogMelError> {
+        let mono = downmix_interleaved(samples, channels)?;
+        self.compute(&mono)
+    }
+
     pub fn compute_flat(&self, samples: &[f32]) -> Result<BatchLogMelOutput, BatchLogMelError> {
         let mut scratch = self.scratch();
         self.compute_flat_with_scratch(samples, &mut scratch)
+    }
+
+    /// Downmix interleaved PCM to mono before flat feature extraction.
+    pub fn compute_flat_interleaved(
+        &self,
+        samples: &[f32],
+        channels: usize,
+    ) -> Result<BatchLogMelOutput, BatchLogMelError> {
+        let mono = downmix_interleaved(samples, channels)?;
+        self.compute_flat(&mono)
     }
 
     pub fn compute_with_scratch(
@@ -653,6 +675,29 @@ fn norm_mel_slice_f64(mel_spec: &[f64]) -> Vec<f64> {
         .collect()
 }
 
+/// Downmix interleaved PCM channels to mono by averaging each sample frame.
+pub fn downmix_interleaved(samples: &[f32], channels: usize) -> Result<Vec<f32>, BatchLogMelError> {
+    if channels == 0 {
+        return Err(BatchLogMelError::InvalidConfig(
+            "channels must be greater than zero",
+        ));
+    }
+    if !samples.chunks_exact(channels).remainder().is_empty() {
+        return Err(BatchLogMelError::InvalidConfig(
+            "sample count must be divisible by channels",
+        ));
+    }
+    if channels == 1 {
+        return Ok(samples.to_vec());
+    }
+
+    let scale = 1.0 / channels as f32;
+    Ok(samples
+        .chunks_exact(channels)
+        .map(|frame| frame.iter().sum::<f32>() * scale)
+        .collect())
+}
+
 fn validate_batch_config(config: &BatchLogMelConfig) -> Result<(), BatchLogMelError> {
     if config.sample_rate == 0 {
         return Err(BatchLogMelError::InvalidConfig("sample_rate must be > 0"));
@@ -958,5 +1003,39 @@ mod tests {
             .unwrap();
 
         assert_eq!(features.shape(), &[128, 101]);
+    }
+
+    #[test]
+    fn downmix_interleaved_averages_each_sample_frame() {
+        let mono = downmix_interleaved(&[1.0, -1.0, 3.0, 1.0, -2.0, -4.0], 2).unwrap();
+        assert_eq!(mono, vec![0.0, 2.0, -3.0]);
+    }
+
+    #[test]
+    fn downmix_interleaved_rejects_incomplete_sample_frames() {
+        assert!(matches!(
+            downmix_interleaved(&[1.0, 2.0, 3.0], 2),
+            Err(BatchLogMelError::InvalidConfig(_))
+        ));
+        assert!(matches!(
+            downmix_interleaved(&[], 0),
+            Err(BatchLogMelError::InvalidConfig(_))
+        ));
+    }
+
+    #[test]
+    fn interleaved_batch_matches_mono_batch() {
+        let frontend = BatchLogMelSpectrogram::new(BatchLogMelConfig::default()).unwrap();
+        let mono = (0..1600)
+            .map(|idx| (idx as f32 * 0.013).sin())
+            .collect::<Vec<_>>();
+        let stereo = mono
+            .iter()
+            .flat_map(|sample| [*sample, *sample])
+            .collect::<Vec<_>>();
+
+        let expected = frontend.compute(&mono).unwrap();
+        let actual = frontend.compute_interleaved(&stereo, 2).unwrap();
+        assert_eq!(actual, expected);
     }
 }

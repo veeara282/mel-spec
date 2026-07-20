@@ -25,6 +25,7 @@ components are:
 | Whisper-compatible mel | Log-mel spectrograms aligned with whisper.cpp, PyTorch, and librosa. |
 | Kaldi-compatible fbank | 80-bin Kaldi-style filterbank features for speaker and audio models. |
 | Streaming STFT | Overlap-and-save STFT for live audio pipelines. |
+| Interleaved PCM | Downmix stereo or multichannel PCM during batch feature extraction. |
 | Model-free VAD | Fast speech/non-speech decisions and timestamps from mel spectrogram structure. |
 | TGA mel images | Store and pass quantized mel spectrograms as simple 8-bit TGA files. |
 | Local Whisper WASM | Hush uses `mel-spec` mel tensors/TGA segments for fully local browser Whisper transcription. |
@@ -47,6 +48,9 @@ let mel_frames = Spectrogram::compute_mel_spectrogram_cpu(
 
 println!("frames={}", mel_frames.len());
 ```
+
+Use `BatchLogMelSpectrogram::compute_interleaved` for interleaved audio. The
+method averages all input channels before feature extraction.
 
 The focused API examples are kept in the example READMEs so the top-level
 README stays readable:

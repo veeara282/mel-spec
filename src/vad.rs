@@ -517,7 +517,7 @@ impl EdgeInfo {
         self.intersected_columns.clone()
     }
 
-    ///  A bitmap, primarily used by [`as_image`].
+    /// A bitmap of detected gradient positions.
     pub fn gradient_positions(&self) -> HashSet<(usize, usize)> {
         self.gradient_positions.clone()
     }
@@ -636,16 +636,8 @@ mod tests {
             let frames = to_array2(&dequantized_mel, n_mels);
 
             let edge_info = vad_boundaries(&[frames.clone()], &settings);
-            let img = as_image(
-                &[frames.clone()],
-                &edge_info.non_intersected(),
-                &edge_info.gradient_positions(),
-            );
-
             dbg!(file_path);
             assert!(vad_on(&edge_info, min_x) == false);
-            let path = format!("./testdata/vad_off_{}.png", id);
-            img.save(path).unwrap();
         }
 
         let ids = vec![11648, 2889, 4694, 4901, 27125];
@@ -655,15 +647,7 @@ mod tests {
             let frames = to_array2(&dequantized_mel, n_mels);
 
             let edge_info = vad_boundaries(&[frames.clone()], &settings);
-            let img = as_image(
-                &[frames.clone()],
-                &edge_info.non_intersected(),
-                &edge_info.gradient_positions(),
-            );
-
             assert!(vad_on(&edge_info, min_x) == true);
-            let path = format!("./testdata/vad_on_{}.png", id);
-            img.save(path).unwrap();
 
             //assert!(edge_info.gradient_count > 800);
         }
@@ -718,13 +702,7 @@ mod tests {
 
         let elapsed = start.elapsed().as_millis();
         eprintln!("test_vad_boundaries elapsed={elapsed}ms");
-        let img = as_image(
-            &[frames.clone()],
-            &edge_info.non_intersected(),
-            &edge_info.gradient_positions(),
-        );
-
-        img.save("./doc/vad.png").unwrap();
+        assert!(!edge_info.intersected().is_empty());
     }
 
     #[ignore]

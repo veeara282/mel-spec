@@ -1,3 +1,13 @@
+# Version 0.4.1
+
+* Added direct batch feature extraction from interleaved multichannel PCM.
+* Fixed oversized ring-buffer writes to retain the newest samples.
+* Made the `rtrb` backend use the same overflow behavior as the default backend.
+* Enabled `wasm32` builds without browser bindings.
+* Limited CUDA compilation to Linux and Windows targets.
+* Added the standard CUDA library path for Windows installations.
+* Removed production dependencies that were only necessary for tests.
+
 # Version 0.4.0
 * Bumped the crate as a minor release. The public dense filterbank APIs remain
   available, and the release adds/optimizes execution paths rather than making a

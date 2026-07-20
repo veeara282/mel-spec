@@ -1,6 +1,6 @@
 [package]
 name = "mel_spec"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 license = "MIT"
 description = "Mel spectrograms aligned to the results from the whisper.cpp, pytorch and librosa reference implementations and suited to streaming audio."
@@ -13,8 +13,6 @@ exclude = ["examples", "pkg", "doc", "testdata/*"]
 [dependencies]
 image = "0.24.6"
 ndarray = "0.16.1"
-ndarray-npy = "0.9.1"
-num = "0.4.1"
 rustfft = { version = "6.2.0" }
 bytemuck = { version = "1.22.0", features = ["derive"], optional = true }
 js-sys = { version = "^0.3", optional = true }
@@ -27,6 +25,7 @@ ort = { version = "2.0.0-rc.9", optional = true }
 rtrb = { version = "0.3.2", optional = true }
 
 [dev-dependencies]
+ndarray-npy = "0.9.1"
 soundkit = { version = "0.11.0" }
 
 [build-dependencies]

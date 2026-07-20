@@ -10,6 +10,11 @@ fn main() {
         return;
     }
 
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "linux" && target_os != "windows" {
+        return;
+    }
+
     let cuda_home = find_cuda_home().expect("CUDA toolkit not found; set CUDA_HOME or CUDA_PATH");
     let nvcc = cuda_home.join("bin").join("nvcc");
     let nvcc_str = nvcc
@@ -31,8 +36,10 @@ fn main() {
     build.extra_warnings(false);
     build.file("src/cuda_kernels.cu");
     build.flag("-std=c++14");
-    build.flag("-Xcompiler");
-    build.flag("-fPIC");
+    if target_os != "windows" {
+        build.flag("-Xcompiler");
+        build.flag("-fPIC");
+    }
     build.compile("cuda_kernels");
 
     if let Ok(path) = env::var("CUDA_LIBRARY_PATH") {
@@ -72,6 +79,7 @@ fn find_cuda_home() -> Option<PathBuf> {
 fn candidate_cuda_lib_dirs(cuda_home: &Path) -> Vec<PathBuf> {
     vec![
         cuda_home.join("lib64"),
+        cuda_home.join("lib").join("x64"),
         cuda_home.join("targets").join("x86_64-linux").join("lib"),
     ]
 }

@@ -1,6 +1,7 @@
 pub use crate::config::MelConfig;
-#[cfg(all(feature = "cuda", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "cuda", any(target_os = "linux", target_os = "windows")))]
 pub use crate::cuda::CudaMelSpectrogram;
+pub use crate::mel::downmix_interleaved;
 pub use crate::mel::interleave_frames;
 pub use crate::mel::BatchLogMelConfig;
 pub use crate::mel::BatchLogMelError;
