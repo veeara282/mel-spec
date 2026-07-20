@@ -1,7 +1,8 @@
 ### WASM Mel Spectrogram with Voice Activity Detection
 
-In this example Mel WASM Worker and Audio Worklets process audio in the background
-and share mel spectrogram frames with the main ui thread via a Shared Array Buffer.
+In this example, a mel WASM worker and AudioWorklets process audio in the
+background. They share mel-spectrogram frames with the main UI thread through a
+SharedArrayBuffer.
 
 It renders in real-time on an M2 Air.
 

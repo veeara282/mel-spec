@@ -67,7 +67,7 @@ same label conversion as TEN-VAD's `plot_pr_curves.py`.
 ## Summary
 
 Measured locally on macOS. `mel-spec` numbers include STFT, mel projection, VAD,
-and postprocessing. Silero numbers exclude model load; model load was about
+and postprocessing. Silero numbers exclude model load. Model load was about
 0.066 seconds in this run.
 
 | System | Threshold/config | Macro precision | Macro recall | Macro F1 | Macro FPR | RTF | RTFx |
@@ -77,17 +77,17 @@ and postprocessing. Silero numbers exclude model load; model load was about
 | Silero tuned | threshold `0.13` | 0.8897 | 0.9388 | 0.9088 | 0.3602 | 0.009063 | 110.3 |
 | Silero default | threshold `0.50` | 0.9379 | 0.8630 | 0.8826 | 0.1778 | 0.009044 | 110.6 |
 
-The balanced default is the better VAD default from this sweep: it improves the
-previous lower-FPR preset on macro F1 and false positives while remaining about
-7.4x faster than Silero on this host. The high-F1 sweep result is useful when
-missed speech is more expensive than sending extra non-speech audio, but it
+The balanced default is the better VAD default from this sweep. It improves
+macro F1 and false positives compared with the previous lower-FPR preset. It is
+approximately 7.4 times faster than Silero on this host. Use the high-F1 result
+when missed speech has a higher cost than extra non-speech audio. This result
 accepts many more false positives.
 
 TEN-VAD is the source of the labeled testset. Its upstream README reports that
 TEN-VAD has a stronger precision/recall curve than Silero and WebRTC on this
-same testset, with published CPU RTF values around `0.0086` to `0.0150` and a
-library size of about `306KB`. We did not run the TEN binary locally in this
-measurement.
+testset. Published CPU RTF values are approximately `0.0086` to `0.0150`. The
+library size is approximately `306KB`. We did not run the TEN binary locally in
+this measurement.
 
 ## Per-File Results
 

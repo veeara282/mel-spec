@@ -9,10 +9,14 @@ filterbank projection derived from the same dense reference matrices. On the
 Parakeet/NeMo JFK benchmark, the pure Rust frontend is now close to C/libtorch
 CPU trace performance while preserving fixture parity.
 
-`mel-spec` is built around the parts of speech pipelines that need to be cheap,
-predictable, and easy to embed: STFT, Whisper-compatible log-mel features,
-Kaldi-style filterbanks, TGA spectrogram interchange, and a lightweight VAD that
-reuses the same mel/STFT features.
+`mel-spec` contains low-cost, predictable components for speech pipelines. The
+components are:
+
+- STFT
+- Whisper-compatible log-mel features
+- Kaldi-style filterbanks
+- TGA spectrogram interchange
+- a lightweight VAD that reuses the same mel and STFT features.
 
 ## Main Features
 
@@ -58,7 +62,7 @@ README stays readable:
 ## Voice Activity Detection
 
 `mel-spec` includes a lightweight, model-free VAD. It does not load a neural VAD
-runtime; it looks for speech-like Sobel edge structure in mel spectrogram frames
+runtime. It looks for speech-like Sobel edge structure in mel spectrogram frames
 and can attach STFT-derived timestamps to each decision.
 
 Current balanced default on the checked-in TEN-VAD testset:
@@ -72,7 +76,7 @@ Current balanced default on the checked-in TEN-VAD testset:
 
 The balanced default is not trying to beat learned VADs at strict endpointing.
 It is a fast built-in option that reuses ASR mel features and avoids another
-model dependency. Tuned Silero is still more accurate overall; TEN-VAD is the
+model dependency. Tuned Silero is still more accurate overall. TEN-VAD is the
 source of the labels and upstream reports stronger precision/recall than Silero
 and WebRTC on the same testset.
 
@@ -85,22 +89,22 @@ TGA spectrograms are useful when you want a simple interchange format for mel
 features. They can be inspected as images, spliced, stored, and passed to the
 Whisper examples without keeping the original audio around.
 
-This path is now live in Hush as local browser ASR. The browser uses
-`mel-spec`'s Whisper-compatible log-mel output, stores captured speech segments
-as compact 8-bit TGA images, decodes them back to an 80-mel `Float32Array`, and
-passes that tensor directly to a custom `whisper.cpp` WASM binding via
-`whisper_set_mel`. The active Hush deployment verifies that local WASM Whisper
+This path is live in Hush as local browser ASR. The browser uses the
+Whisper-compatible log-mel output from `mel-spec`. It stores captured speech as
+compact 8-bit TGA images. It decodes the images to an 80-mel `Float32Array` and
+passes the tensor to `whisper_set_mel` in a custom `whisper.cpp` WASM binding.
+The active Hush deployment verifies that local WASM Whisper
 can transcribe from the mel tensor without posting microphone audio to a server.
-This uses the direct-mel endpoint/entry point we PR'd against `whisper.cpp`,
+This uses the proposed direct-mel entry point for `whisper.cpp`,
 not the stock browser example that feeds PCM audio into `whisper.wasm`.
 
 ![image](doc/cutsec_46997.png)
 _"the quest for peace."_
 
 Mel spectrograms are also robust under heavy quantization. Whisper does not need
-high-precision PCM once the signal has been projected into mel space: 8-bit TGA
-images preserve the information the model sees, and even coarse rounding of mel
-values can retain useful transcription quality.
+high-precision PCM after projection into mel space. Eight-bit TGA images
+preserve the information that the model sees. Coarse mel-value rounding can
+also retain useful transcription quality.
 
 ```text
 Original: [0.158, 0.266, 0.076, 0.196, 0.167, ...]
@@ -125,15 +129,15 @@ Benchmarks on Apple M1 Pro, single-threaded release build:
 `mel()` and the Kaldi filterbank builder still produce dense filterbank
 matrices for reference, fixture comparison, and interchange with other
 toolchains. Runtime mel/fbank computation derives sparse projection tables from
-those dense matrices, so the executed math is checked against the same reference
-weights instead of maintaining a separate filterbank definition.
+these dense matrices. Thus, tests compare the executed math with the same
+reference weights. A separate filterbank definition is not necessary.
 
 ### Parakeet/NeMo Frontend Check
 
 `asr-api` also uses `mel-spec` filterbanks in its Parakeet/TDT frontend. We
-benchmarked that Rust frontend against a CPU TorchScript trace of the original
-NeMo Parakeet featurizer (`featurizer_cpu.pt`) on the JFK sample
-(`11s`, mono 16 kHz) on the same M1 Mac.
+compared that Rust frontend with a CPU TorchScript trace of the original NeMo
+Parakeet featurizer (`featurizer_cpu.pt`). The test used the 11-second, mono
+16 kHz JFK sample on the same M1 Mac.
 
 The benchmark is useful for two reasons:
 
@@ -202,7 +206,7 @@ the current tuned settings it works as a live browser VAD, spectrogram debugging
 view, and local Whisper WASM transcription demo. It exposes mel structure, Sobel
 edges, ridge tracks, candidate speech regions, and the local transcript in real
 time. The VAD itself should still be treated as experimental rather than a
-drop-in replacement for a learned VAD; one strong use case is as a browser-side
+drop-in replacement for a learned VAD. One strong use case is as a browser-side
 feature/debugging front end or cheap prefilter before a stronger VAD/ASR model.
 
 ![image](doc/browser.png)
