@@ -1104,6 +1104,7 @@ mod tests {
         }
 
         let mean_delta = sum_delta / count as f32;
+        println!("max delta: {:.4e}, mean delta: {:.4e}", max_delta, mean_delta);
         assert!(
             max_delta < 0.08,
             "max delta too large: {max_delta}, mean delta: {mean_delta}"
@@ -1163,6 +1164,7 @@ mod tests {
         }
 
         let mean_delta = sum_delta / count as f32;
+        println!("max delta: {:.4e}, mean delta: {:.4e}", max_delta, mean_delta);
         assert!(
             max_delta < 0.08,
             "max delta too large: {max_delta}, mean delta: {mean_delta}"
