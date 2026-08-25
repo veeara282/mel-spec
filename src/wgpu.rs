@@ -976,7 +976,6 @@ fn select_fft_strategy(fft_size: usize) -> FftStrategy {
                 }
             }
         }
-        // TODO stuff
         FftStrategy::MixedRadix(factors)
     }
 }
