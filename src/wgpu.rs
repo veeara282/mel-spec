@@ -376,36 +376,39 @@ impl WgpuMelSpectrogram {
             });
 
         let max_invocations_per_dispatch = MAX_DISPATCH_GROUPS * WORKGROUP_SIZE;
-        let fft_buffer = if self.fft_size.is_power_of_two() {
-            let scratch_buffer = create_storage_buffer(
-                &self.device,
-                "mel-spec fft scratch",
-                complex_bytes,
-                ::wgpu::BufferUsages::empty(),
-            );
-            self.encode_radix2_fft(
-                &mut encoder,
-                &input_buffer,
-                &scratch_buffer,
-                num_frames,
-                self.fft_size,
-                max_invocations_per_dispatch,
-            )
-        } else {
-            let output_buffer = create_storage_buffer(
-                &self.device,
-                "mel-spec bluestein output",
-                complex_bytes,
-                ::wgpu::BufferUsages::empty(),
-            );
-            self.encode_bluestein_fft(
-                &mut encoder,
-                &input_buffer,
-                &output_buffer,
-                num_frames,
-                max_invocations_per_dispatch,
-            );
-            output_buffer
+        let fft_buffer = match self.fft_strategy {
+            FftStrategy::Radix2 => {
+                let scratch_buffer = create_storage_buffer(
+                    &self.device,
+                    "mel-spec fft scratch",
+                    complex_bytes,
+                    ::wgpu::BufferUsages::empty(),
+                );
+                self.encode_radix2_fft(
+                    &mut encoder,
+                    &input_buffer,
+                    &scratch_buffer,
+                    num_frames,
+                    self.fft_size,
+                    max_invocations_per_dispatch,
+                )
+            }
+            _ => {
+                let output_buffer = create_storage_buffer(
+                    &self.device,
+                    "mel-spec bluestein output",
+                    complex_bytes,
+                    ::wgpu::BufferUsages::empty(),
+                );
+                self.encode_bluestein_fft(
+                    &mut encoder,
+                    &input_buffer,
+                    &output_buffer,
+                    num_frames,
+                    max_invocations_per_dispatch,
+                );
+                output_buffer
+            }
         };
 
         let mel_total = mel_values_len as u32;
