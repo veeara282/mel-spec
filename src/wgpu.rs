@@ -116,6 +116,13 @@ struct BluesteinPostUniforms {
     _pad2: u32,
 }
 
+#[derive(Debug, PartialEq)]
+enum FftStrategy {
+    Radix2,
+    MixedRadix(Vec<usize>),
+    Bluestein,
+}
+
 pub struct WgpuMelSpectrogram {
     adapter_info: ::wgpu::AdapterInfo,
     bitreverse_bgl: ::wgpu::BindGroupLayout,
@@ -127,6 +134,7 @@ pub struct WgpuMelSpectrogram {
     conjugate_pipeline: ::wgpu::ComputePipeline,
     device: ::wgpu::Device,
     fft_size: usize,
+    fft_strategy: FftStrategy,
     filter_buffer: ::wgpu::Buffer,
     hop_size: usize,
     mel_bgl: ::wgpu::BindGroupLayout,
@@ -259,16 +267,21 @@ impl WgpuMelSpectrogram {
             usage: ::wgpu::BufferUsages::STORAGE,
         });
 
-        let (bluestein_convolution_size, bluestein_kernel_buffer) = if fft_size.is_power_of_two() {
-            (None, None)
-        } else {
-            let (convolution_size, kernel_fft) = build_bluestein_kernel(fft_size);
-            let kernel_buffer = device.create_buffer_init(&::wgpu::util::BufferInitDescriptor {
-                label: Some("mel-spec bluestein kernel"),
-                contents: bytemuck::cast_slice(&kernel_fft),
-                usage: ::wgpu::BufferUsages::STORAGE,
-            });
-            (Some(convolution_size), Some(kernel_buffer))
+        let fft_strategy = select_fft_strategy(fft_size);
+
+        let (bluestein_convolution_size, bluestein_kernel_buffer) = match fft_strategy {
+            // XXX Skip Bluestein init only for Radix2 strategy - MixedRadix isn't implemented yet
+            FftStrategy::Radix2 => (None, None),
+            _ => {
+                let (convolution_size, kernel_fft) = build_bluestein_kernel(fft_size);
+                let kernel_buffer =
+                    device.create_buffer_init(&::wgpu::util::BufferInitDescriptor {
+                        label: Some("mel-spec bluestein kernel"),
+                        contents: bytemuck::cast_slice(&kernel_fft),
+                        usage: ::wgpu::BufferUsages::STORAGE,
+                    });
+                (Some(convolution_size), Some(kernel_buffer))
+            }
         };
 
         Ok(Self {
@@ -282,6 +295,7 @@ impl WgpuMelSpectrogram {
             conjugate_pipeline,
             device,
             fft_size,
+            fft_strategy,
             filter_buffer,
             hop_size,
             mel_bgl,
@@ -932,6 +946,41 @@ impl WgpuMelSpectrogram {
     }
 }
 
+fn select_fft_strategy(fft_size: usize) -> FftStrategy {
+    if fft_size.is_power_of_two() {
+        // Use the default radix-2 FFT
+        FftStrategy::Radix2
+    } else {
+        // Try to decompose fft_size into supported factors (divisors)
+        let mut factors: Vec<usize> = Vec::new();
+        let mut cur_dividend = fft_size;
+        let mut cur_divisor = 2usize;
+        let mut supported_primes: Vec<usize> = vec![7, 5, 3];
+
+        while cur_dividend > 1 {
+            // LLVM typically optimizes this to a single div_rem instruction
+            let quo = cur_dividend / cur_divisor;
+            let rem = cur_dividend % cur_divisor;
+
+            if rem == 0 {
+                factors.push(cur_divisor);
+                cur_dividend = quo;
+            } else {
+                // Stop dividing by cur_divisor, get the next supported prime factor
+                if let Some(next_divisor) = supported_primes.pop() {
+                    cur_divisor = next_divisor;
+                    continue;
+                } else {
+                    // Unsupported prime factor found
+                    return FftStrategy::Bluestein;
+                }
+            }
+        }
+        // TODO stuff
+        FftStrategy::MixedRadix(factors)
+    }
+}
+
 fn build_bluestein_kernel(fft_size: usize) -> (usize, Vec<Complex32>) {
     let convolution_size = (fft_size.saturating_mul(2).saturating_sub(1)).next_power_of_two();
     let mut kernel = vec![FftComplex32::new(0.0, 0.0); convolution_size];
@@ -1054,6 +1103,24 @@ mod tests {
     use std::time::Instant;
 
     #[test]
+    fn test_select_fft_strategy() {
+        // Test cases
+        let fft_size = vec![256, 15, 400, 44100, 33];
+        let result = vec![
+            FftStrategy::Radix2,
+            FftStrategy::MixedRadix(vec![3, 5]),
+            FftStrategy::MixedRadix(vec![2, 2, 2, 2, 5, 5]),
+            FftStrategy::MixedRadix(vec![2, 2, 3, 3, 5, 5, 7, 7]),
+            FftStrategy::Bluestein,
+        ];
+
+        for i in 0..fft_size.len() {
+            let res = select_fft_strategy(fft_size[i]);
+            assert_eq!(res, result[i], "incorrect fft strategy");
+        }
+    }
+
+    #[test]
     fn wgpu_matches_cpu_for_power_of_two_fft() {
         let fft_size = 512;
         let hop_size = 160;
@@ -1104,7 +1171,10 @@ mod tests {
         }
 
         let mean_delta = sum_delta / count as f32;
-        println!("max delta: {:.4e}, mean delta: {:.4e}", max_delta, mean_delta);
+        println!(
+            "max delta: {:.4e}, mean delta: {:.4e}",
+            max_delta, mean_delta
+        );
         assert!(
             max_delta < 0.08,
             "max delta too large: {max_delta}, mean delta: {mean_delta}"
@@ -1164,7 +1234,10 @@ mod tests {
         }
 
         let mean_delta = sum_delta / count as f32;
-        println!("max delta: {:.4e}, mean delta: {:.4e}", max_delta, mean_delta);
+        println!(
+            "max delta: {:.4e}, mean delta: {:.4e}",
+            max_delta, mean_delta
+        );
         assert!(
             max_delta < 0.08,
             "max delta too large: {max_delta}, mean delta: {mean_delta}"
