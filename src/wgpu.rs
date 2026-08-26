@@ -635,6 +635,106 @@ impl WgpuMelSpectrogram {
         }
     }
 
+    #[allow(dead_code)]
+    fn encode_mixed_radix_fft(
+        &self,
+        encoder: &mut ::wgpu::CommandEncoder,
+        input_buffer: &::wgpu::Buffer,
+        scratch_buffer: &::wgpu::Buffer,
+        num_frames: usize,
+        fft_size: usize,
+        factors: &[usize],
+        max_invocations_per_dispatch: u32,
+    ) -> ::wgpu::Buffer {
+        // Implements the Stockham autosort FFT algorithm
+
+        // This is toggled every stage and indicates whether the most recently computed values are in the
+        // original input buffer or the scratch buffer. Unlike in the radix-2 decimation-in-time algorithm, we start
+        // in the input buffer because there is no bit-reversal permutation beforehand.
+        let mut read_from_scratch = false;
+        // Prime factors are popped off this list and consumed one at a time
+        let mut remaining_factors = factors.to_vec();
+        // The current stage length - initializes at 1 then is multiplied by current prime factor before each use
+        // Invariant: stage_len will be equal to fft_size when this loop exits
+        let mut stage_len = 1usize;
+
+        while let Some(radix) = remaining_factors.pop() {
+            // Use the current value of stage_len for half_len, then multiply stage_len by the current radix
+            // to get its new value.
+            // In this loop, half_len isn't necessarily half of stage_len.
+            // TODO see "10. Stage uniforms" - stage_len and half_len should be replaced with mixed-radix metadata
+            let half_len = stage_len;
+            stage_len *= radix;
+
+            // Ping-pong between input and scratch buffers
+            let (src_buffer, dst_buffer) = if read_from_scratch {
+                (scratch_buffer, input_buffer)
+            } else {
+                (input_buffer, scratch_buffer)
+            };
+            read_from_scratch = !read_from_scratch;
+
+            // Total number of invocations in this stage - each invocation computes one full radix-r butterfly,
+            // and invocations are dispatched to the GPU at most max_invocations_per_dispatch at a time
+            let stage_total = (num_frames * fft_size / radix) as u32;
+            for dispatch_offset in (0..stage_total).step_by(max_invocations_per_dispatch as usize) {
+                let chunk_invocations =
+                    (stage_total - dispatch_offset).min(max_invocations_per_dispatch);
+
+                // TODO Replace with Stockham stage uniforms
+                let stage_uniforms = StageUniforms {
+                    fft_size: fft_size as u32,
+                    num_frames: num_frames as u32,
+                    stage_len: stage_len as u32,
+                    half_len: half_len as u32,
+                    dispatch_offset,
+                    _pad: 0,
+                };
+                let stage_uniform_buffer =
+                    self.device
+                        .create_buffer_init(&::wgpu::util::BufferInitDescriptor {
+                            label: Some("mel-spec stage uniforms"),
+                            contents: bytemuck::bytes_of(&stage_uniforms),
+                            usage: ::wgpu::BufferUsages::UNIFORM,
+                        });
+
+                let stage_bind_group =
+                    self.device.create_bind_group(&::wgpu::BindGroupDescriptor {
+                        label: Some("mel-spec stage bind group"),
+                        layout: &self.stage_bgl,
+                        entries: &[
+                            ::wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: src_buffer.as_entire_binding(),
+                            },
+                            ::wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: dst_buffer.as_entire_binding(),
+                            },
+                            ::wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: stage_uniform_buffer.as_entire_binding(),
+                            },
+                        ],
+                    });
+
+                // TODO Dispatch Stockham stage pipeline instead
+                dispatch_compute(
+                    encoder,
+                    &self.stage_pipeline,
+                    &stage_bind_group,
+                    dispatch_count(chunk_invocations),
+                );
+            }
+        }
+
+        if read_from_scratch {
+            scratch_buffer.clone()
+        } else {
+            input_buffer.clone()
+        }
+    }
+
     fn encode_bluestein_fft(
         &self,
         encoder: &mut ::wgpu::CommandEncoder,
