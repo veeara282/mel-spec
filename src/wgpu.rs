@@ -150,6 +150,8 @@ pub struct WgpuMelSpectrogram {
     hop_size: usize,
     mel_bgl: ::wgpu::BindGroupLayout,
     mel_pipeline: ::wgpu::ComputePipeline,
+    mixed_stage_bgl: ::wgpu::BindGroupLayout,
+    mixed_stage_pipeline: ::wgpu::ComputePipeline,
     n_mels: usize,
     pointwise_bgl: ::wgpu::BindGroupLayout,
     pointwise_pipeline: ::wgpu::ComputePipeline,
@@ -213,6 +215,15 @@ impl WgpuMelSpectrogram {
             ],
         });
 
+        let mixed_stage_bgl = device.create_bind_group_layout(&::wgpu::BindGroupLayoutDescriptor {
+            label: Some("mel-spec mixed-radix fft stage bgl"),
+            entries: &[
+                storage_layout_entry(0, true),
+                storage_layout_entry(1, false),
+                uniform_layout_entry(2),
+            ],
+        });
+
         let pointwise_bgl = device.create_bind_group_layout(&::wgpu::BindGroupLayoutDescriptor {
             label: Some("mel-spec pointwise bgl"),
             entries: &[
@@ -242,6 +253,13 @@ impl WgpuMelSpectrogram {
         );
         let stage_pipeline =
             create_pipeline(&device, &shader, &stage_bgl, "fft_stage_main", "fft stage");
+        let mixed_stage_pipeline = create_pipeline(
+            &device,
+            &shader,
+            &mixed_stage_bgl,
+            "mixed_radix_stage_main",
+            "mixed-radix fft stage",
+        );
         let bluestein_prepare_pipeline = create_pipeline(
             &device,
             &shader,
@@ -281,8 +299,8 @@ impl WgpuMelSpectrogram {
         let fft_strategy = select_fft_strategy(fft_size);
 
         let (bluestein_convolution_size, bluestein_kernel_buffer) = match fft_strategy {
-            // XXX Skip Bluestein init only for Radix2 strategy - MixedRadix isn't implemented yet
             FftStrategy::Radix2 => (None, None),
+            FftStrategy::MixedRadix(_) => (None, None),
             _ => {
                 let (convolution_size, kernel_fft) = build_bluestein_kernel(fft_size);
                 let kernel_buffer =
@@ -311,6 +329,8 @@ impl WgpuMelSpectrogram {
             hop_size,
             mel_bgl,
             mel_pipeline,
+            mixed_stage_bgl,
+            mixed_stage_pipeline,
             n_mels,
             pointwise_bgl,
             pointwise_pipeline,
@@ -387,7 +407,7 @@ impl WgpuMelSpectrogram {
             });
 
         let max_invocations_per_dispatch = MAX_DISPATCH_GROUPS * WORKGROUP_SIZE;
-        let fft_buffer = match self.fft_strategy {
+        let fft_buffer = match &self.fft_strategy {
             FftStrategy::Radix2 => {
                 let scratch_buffer = create_storage_buffer(
                     &self.device,
@@ -401,6 +421,23 @@ impl WgpuMelSpectrogram {
                     &scratch_buffer,
                     num_frames,
                     self.fft_size,
+                    max_invocations_per_dispatch,
+                )
+            }
+            FftStrategy::MixedRadix(factors) => {
+                let scratch_buffer = create_storage_buffer(
+                    &self.device,
+                    "mel-spec fft scratch",
+                    complex_bytes,
+                    ::wgpu::BufferUsages::empty(),
+                );
+                self.encode_mixed_radix_fft(
+                    &mut encoder,
+                    &input_buffer,
+                    &scratch_buffer,
+                    num_frames,
+                    self.fft_size,
+                    &factors.as_slice(),
                     max_invocations_per_dispatch,
                 )
             }
@@ -509,11 +546,12 @@ impl WgpuMelSpectrogram {
     fn max_frames_per_batch(&self) -> usize {
         let max_storage_binding_size =
             ::wgpu::Limits::default().max_storage_buffer_binding_size as u64;
-        let complex_fft_size = if self.fft_size.is_power_of_two() {
-            self.fft_size
-        } else {
-            self.bluestein_convolution_size
-                .expect("bluestein size is only needed for non-power-of-two FFTs")
+        let complex_fft_size = match self.fft_strategy {
+            FftStrategy::Bluestein => {
+                self.bluestein_convolution_size
+                    .expect("bluestein size is only needed for non-power-of-two FFTs")
+            },
+            _ => self.fft_size
         };
         let complex_frame_bytes = size_bytes::<Complex32>(complex_fft_size);
         let mel_frame_bytes = size_bytes::<f32>(self.n_mels);
@@ -646,7 +684,6 @@ impl WgpuMelSpectrogram {
         }
     }
 
-    #[allow(dead_code)]
     fn encode_mixed_radix_fft(
         &self,
         encoder: &mut ::wgpu::CommandEncoder,
@@ -665,17 +702,11 @@ impl WgpuMelSpectrogram {
         let mut read_from_scratch = false;
         // Prime factors are popped off this list and consumed one at a time
         let mut remaining_factors = factors.to_vec();
-        // The current stage length - initializes at 1 then is multiplied by current prime factor before each use
-        // Invariant: stage_len will be equal to fft_size when this loop exits
-        let mut stage_len = 1usize;
+
+        let mut inner_size = 1usize;
 
         while let Some(radix) = remaining_factors.pop() {
-            // Use the current value of stage_len for half_len, then multiply stage_len by the current radix
-            // to get its new value.
-            // In this loop, half_len isn't necessarily half of stage_len.
-            // TODO see "10. Stage uniforms" - stage_len and half_len should be replaced with mixed-radix metadata
-            let half_len = stage_len;
-            stage_len *= radix;
+            let group_count = fft_size / (inner_size * radix);
 
             // Ping-pong between input and scratch buffers
             let (src_buffer, dst_buffer) = if read_from_scratch {
@@ -692,27 +723,26 @@ impl WgpuMelSpectrogram {
                 let chunk_invocations =
                     (stage_total - dispatch_offset).min(max_invocations_per_dispatch);
 
-                // TODO Replace with Stockham stage uniforms
-                let stage_uniforms = StageUniforms {
+                let mixed_stage_uniforms = MixedRadixStageUniforms {
                     fft_size: fft_size as u32,
                     num_frames: num_frames as u32,
-                    stage_len: stage_len as u32,
-                    half_len: half_len as u32,
+                    radix: radix as u32,
+                    inner_size: inner_size as u32,
+                    group_count: group_count as u32,
                     dispatch_offset,
-                    _pad: 0,
                 };
-                let stage_uniform_buffer =
+                let mixed_stage_uniform_buffer =
                     self.device
                         .create_buffer_init(&::wgpu::util::BufferInitDescriptor {
-                            label: Some("mel-spec stage uniforms"),
-                            contents: bytemuck::bytes_of(&stage_uniforms),
+                            label: Some("mel-spec mixed-radix stage uniforms"),
+                            contents: bytemuck::bytes_of(&mixed_stage_uniforms),
                             usage: ::wgpu::BufferUsages::UNIFORM,
                         });
 
-                let stage_bind_group =
+                let mixed_stage_bind_group =
                     self.device.create_bind_group(&::wgpu::BindGroupDescriptor {
-                        label: Some("mel-spec stage bind group"),
-                        layout: &self.stage_bgl,
+                        label: Some("mel-spec mixed-radix stage bind group"),
+                        layout: &self.mixed_stage_bgl,
                         entries: &[
                             ::wgpu::BindGroupEntry {
                                 binding: 0,
@@ -724,19 +754,20 @@ impl WgpuMelSpectrogram {
                             },
                             ::wgpu::BindGroupEntry {
                                 binding: 2,
-                                resource: stage_uniform_buffer.as_entire_binding(),
+                                resource: mixed_stage_uniform_buffer.as_entire_binding(),
                             },
                         ],
                     });
 
-                // TODO Dispatch Stockham stage pipeline instead
                 dispatch_compute(
                     encoder,
-                    &self.stage_pipeline,
-                    &stage_bind_group,
+                    &self.mixed_stage_pipeline,
+                    &mixed_stage_bind_group,
                     dispatch_count(chunk_invocations),
                 );
             }
+
+            inner_size *= radix;
         }
 
         if read_from_scratch {
