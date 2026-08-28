@@ -16,6 +16,15 @@ struct StageUniforms {
     _pad: u32,
 }
 
+struct MixedRadixStageUniforms {
+    fft_size: u32,
+    num_frames: u32,
+    radix: u32,
+    inner_size: u32,
+    group_count: u32,
+    dispatch_offset: u32,
+}
+
 struct MelUniforms {
     fft_size: u32,
     num_frames: u32,
@@ -72,6 +81,13 @@ var<storage, read> stage_input: array<vec2<f32>>;
 var<storage, read_write> stage_output: array<vec2<f32>>;
 @group(0) @binding(2)
 var<uniform> stage_uniforms: StageUniforms;
+
+@group(0) @binding(0)
+var<storage, read> mixed_stage_input: array<vec2<f32>>;
+@group(0) @binding(1)
+var<storage, read_write> mixed_stage_output: array<vec2<f32>>;
+@group(0) @binding(2)
+var<uniform> mixed_stage_uniforms: MixedRadixStageUniforms;
 
 @group(0) @binding(0)
 var<storage, read> mel_fft: array<vec2<f32>>;
@@ -172,6 +188,60 @@ fn fft_stage_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     stage_output[base + i] = even + odd;
     stage_output[base + j] = even - odd;
+}
+
+@compute @workgroup_size(64, 1, 1)
+fn mixed_radix_stage_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let butterfly = mixed_stage_uniforms.dispatch_offset + gid.x;
+    let total = mixed_stage_uniforms.num_frames * mixed_stage_uniforms.group_count;
+    if (butterfly >= total) {
+        return;
+    }
+
+    let frame = butterfly / mixed_stage_uniforms.group_count;
+    let frame_base = frame * mixed_stage_uniforms.fft_size;
+
+    let local = butterfly % (mixed_stage_uniforms.group_count *
+                            mixed_stage_uniforms.inner_size);
+    let group = local / mixed_stage_uniforms.inner_size;
+    let inner = local % mixed_stage_uniforms.inner_size;
+
+    let r = mixed_stage_uniforms.radix;
+    let m = mixed_stage_uniforms.inner_size;
+    let q = mixed_stage_uniforms.group_count;
+
+    var values: array<vec2<f32>, 7>;
+
+    for (var input_digit = 0u; input_digit < r; input_digit++) {
+        let source_lane = group * r * m
+                        + inner
+                        + input_digit * m;
+        let value = mixed_stage_input[frame_base + source_lane];
+
+        let angle = -2.0 * PI * f32(input_digit * inner) / f32(r * m);
+        let stage_twiddle = vec2<f32>(cos(angle), sin(angle));
+
+        values[input_digit] = complex_mul(value, stage_twiddle);
+    }
+
+    for (var output_digit = 0u; output_digit < r; output_digit++) {
+        var result = vec2<f32>(0.0, 0.0);
+
+        for (var input_digit = 0u; input_digit < r; input_digit++) {
+            let angle = -2.0 * PI
+                        * f32(input_digit * output_digit)
+                        / f32(r);
+
+            let root = vec2<f32>(cos(angle), sin(angle));
+            result = result
+               + complex_mul(values[input_digit], root);
+        }
+
+        let destination_lane = group * m
+                            + inner
+                            + output_digit * q * m;
+        mixed_stage_output[frame_base + destination_lane] = result;
+    }
 }
 
 @compute @workgroup_size(64, 1, 1)

@@ -65,6 +65,17 @@ struct StageUniforms {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct MixedRadixStageUniforms {
+    fft_size: u32,
+    num_frames: u32,
+    radix: u32,
+    inner_size: u32,
+    group_count: u32,
+    dispatch_offset: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct MelUniforms {
     fft_size: u32,
     num_frames: u32,
