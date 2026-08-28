@@ -193,16 +193,21 @@ fn fft_stage_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 @compute @workgroup_size(64, 1, 1)
 fn mixed_radix_stage_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let butterfly = mixed_stage_uniforms.dispatch_offset + gid.x;
-    let total = mixed_stage_uniforms.num_frames * mixed_stage_uniforms.group_count;
+    let butterflies_per_frame =
+        mixed_stage_uniforms.group_count *
+        mixed_stage_uniforms.inner_size;
+
+    let total =
+        mixed_stage_uniforms.num_frames *
+        butterflies_per_frame;
     if (butterfly >= total) {
         return;
     }
 
-    let frame = butterfly / mixed_stage_uniforms.group_count;
+    let frame = butterfly / butterflies_per_frame;
     let frame_base = frame * mixed_stage_uniforms.fft_size;
 
-    let local = butterfly % (mixed_stage_uniforms.group_count *
-                            mixed_stage_uniforms.inner_size);
+    let local = butterfly % butterflies_per_frame;
     let group = local / mixed_stage_uniforms.inner_size;
     let inner = local % mixed_stage_uniforms.inner_size;
 
